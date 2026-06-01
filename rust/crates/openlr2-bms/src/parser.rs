@@ -25,6 +25,8 @@ struct ParseState {
     meta: BmsMeta,
     wav_table: HashMap<usize, ResourceRef>,
     bmp_table: HashMap<usize, ResourceRef>,
+    bpm_table: HashMap<usize, f64>,
+    stop_table: HashMap<usize, f64>,
     bpm_events: Vec<BpmEvent>,
     stop_events: Vec<StopEvent>,
     raw_notes: Vec<Vec<(Beat, String)>>,
@@ -48,28 +50,15 @@ pub fn parse_bms(
         let line = line.strip_suffix('\r').unwrap_or(line);
 
         if let Some(rest) = line.strip_prefix("#WAV") {
-            parse_resource_line(rest, &mut state.wav_table, 36)?;
+            parse_resource_line(rest, &mut state.wav_table, 62)?;
         } else if let Some(rest) = line.strip_prefix("#BMP") {
-            parse_resource_line(rest, &mut state.bmp_table, 36)?;
+            parse_resource_line(rest, &mut state.bmp_table, 62)?;
         } else if let Some(rest) = line.strip_prefix("#STOP") {
             state.parse_stop_line(rest)?;
         } else if let Some(rest) = line.strip_prefix("#STP") {
             state.parse_stop_ms_line(rest)?;
         } else if let Some(rest) = line.strip_prefix("#BPM") {
-            if let Some(value) = rest.split_whitespace().next() {
-                state.meta.max_bpm = state.meta.max_bpm.max(value.parse().unwrap_or(0.0));
-                state.meta.min_bpm = if state.meta.min_bpm == 0.0 {
-                    value.parse().unwrap_or(130.0)
-                } else {
-                    state.meta.min_bpm.min(value.parse().unwrap_or(0.0))
-                };
-                if let Ok(bpm) = value.parse::<f64>() {
-                    state.bpm_events.push(BpmEvent {
-                        bms_time: Beat(0.0),
-                        bpm,
-                    });
-                }
-            }
+            state.parse_bpm_line(rest)?;
         } else if let Some(rest) = line.strip_prefix("#TITLE") {
             state.meta.title = rest.trim().to_string();
         } else if let Some(rest) = line.strip_prefix("#SUBTITLE") {
@@ -104,6 +93,8 @@ impl ParseState {
             },
             wav_table: HashMap::new(),
             bmp_table: HashMap::new(),
+            bpm_table: HashMap::new(),
+            stop_table: HashMap::new(),
             bpm_events: Vec::new(),
             stop_events: Vec::new(),
             raw_notes: vec![Vec::new(); 20],
@@ -114,22 +105,8 @@ impl ParseState {
     }
 
     fn parse_stop_line(&mut self, rest: &str) -> Result<(), OpenLr2Error> {
-        let idx_end = rest
-            .find(|c: char| !c.is_ascii_alphanumeric())
-            .unwrap_or(rest.len());
-        let val_str = rest[idx_end..].trim();
-        let val: f64 = val_str.parse().unwrap_or(0.0);
-        let duration_ms = if val > 0.0 {
-            192.0 / val * 1000.0 / 2.0
-        } else {
-            0.0
-        };
-        if duration_ms > 0.0 {
-            self.stop_events.push(StopEvent {
-                bms_time: Beat(0.0),
-                duration_ms: openlr2_core::Millis(duration_ms),
-            });
-        }
+        let (idx, value) = parse_indexed_value(rest, 36)?;
+        self.stop_table.insert(idx, value);
         Ok(())
     }
 
@@ -148,6 +125,34 @@ impl ParseState {
         Ok(())
     }
 
+    fn parse_bpm_line(&mut self, rest: &str) -> Result<(), OpenLr2Error> {
+        if let Ok((idx, bpm)) = parse_indexed_value(rest, 36) {
+            self.bpm_table.insert(idx, bpm);
+            self.update_bpm_range(bpm);
+            return Ok(());
+        }
+
+        if let Some(value) = rest.split_whitespace().next() {
+            if let Ok(bpm) = value.parse::<f64>() {
+                self.update_bpm_range(bpm);
+                self.bpm_events.push(BpmEvent {
+                    bms_time: Beat(0.0),
+                    bpm,
+                });
+            }
+        }
+        Ok(())
+    }
+
+    fn update_bpm_range(&mut self, bpm: f64) {
+        self.meta.max_bpm = self.meta.max_bpm.max(bpm);
+        self.meta.min_bpm = if self.meta.min_bpm == 0.0 {
+            bpm
+        } else {
+            self.meta.min_bpm.min(bpm)
+        };
+    }
+
     fn parse_channel_line(&mut self, line: &str) -> Result<(), OpenLr2Error> {
         let body = &line[1..];
         if body.len() < 6 {
@@ -159,7 +164,7 @@ impl ParseState {
             .parse()
             .map_err(|_| OpenLr2Error::BmsParse(format!("invalid measure: {}", measure_str)))?;
 
-        let channel = base_decode(channel_str, 36)
+        let channel = parse_channel_code(channel_str)
             .ok_or_else(|| OpenLr2Error::BmsParse(format!("invalid channel: {}", channel_str)))?;
 
         let colon_pos = body[5..].find(':').map(|p| p + 5).unwrap_or(body.len());
@@ -181,26 +186,43 @@ impl ParseState {
             if val_str == "00" {
                 continue;
             }
-            let beat = (measure as f64 - 1.0) + (i as f64) / (num_values as f64);
+            // BMS measure numbers are zero-based bars. The rest of the model uses
+            // quarter-note beats, so one default 4/4 measure advances by 4 beats.
+            let beat = measure as f64 * 4.0 + (i as f64) / (num_values as f64) * 4.0;
 
-            if channel == 3 || channel == 8 {
+            if channel == 3 {
                 if let Ok(bpm) = u32::from_str_radix(val_str, 16) {
                     let bpm_f = if bpm > 0 { bpm as f64 } else { 130.0 };
-                    self.meta.max_bpm = self.meta.max_bpm.max(bpm_f);
-                    self.meta.min_bpm = if self.meta.min_bpm == 0.0 {
-                        bpm_f
-                    } else {
-                        self.meta.min_bpm.min(bpm_f)
-                    };
+                    self.update_bpm_range(bpm_f);
                     self.bpm_events.push(BpmEvent {
                         bms_time: Beat(beat),
                         bpm: bpm_f,
                     });
                 }
+            } else if channel == 8 {
+                if let Some(idx) = base_decode(val_str, 36) {
+                    if let Some(&bpm) = self.bpm_table.get(&idx) {
+                        self.update_bpm_range(bpm);
+                        self.bpm_events.push(BpmEvent {
+                            bms_time: Beat(beat),
+                            bpm,
+                        });
+                    }
+                }
             } else if channel == 9 {
-                let val = u32::from_str_radix(val_str, 16).unwrap_or(0);
-                if val > 0 {
-                    let duration_ms = 192.0 / val as f64 * 1000.0 / 2.0;
+                if let Some(idx) = base_decode(val_str, 36) {
+                    if let Some(&stop_value) = self.stop_table.get(&idx) {
+                        let duration_ms = stop_value_to_ms(stop_value);
+                        if duration_ms <= 0.0 {
+                            continue;
+                        }
+                        self.stop_events.push(StopEvent {
+                            bms_time: Beat(beat),
+                            duration_ms: openlr2_core::Millis(duration_ms),
+                        });
+                    }
+                } else if let Ok(val) = u32::from_str_radix(val_str, 16) {
+                    let duration_ms = stop_value_to_ms(val as f64);
                     self.stop_events.push(StopEvent {
                         bms_time: Beat(beat),
                         duration_ms: openlr2_core::Millis(duration_ms),
@@ -310,6 +332,31 @@ fn parse_resource_line(
     Ok(())
 }
 
+fn parse_indexed_value(rest: &str, base: u32) -> Result<(usize, f64), OpenLr2Error> {
+    let idx_end = rest
+        .find(|c: char| !c.is_ascii_alphanumeric())
+        .unwrap_or(rest.len());
+    if idx_end == 0 || idx_end == rest.len() {
+        return Err(OpenLr2Error::BmsParse("missing indexed value".to_string()));
+    }
+
+    let idx_str = &rest[..idx_end];
+    let value_str = rest[idx_end..].trim();
+    if value_str.is_empty() {
+        return Err(OpenLr2Error::BmsParse(format!(
+            "missing value for index {}",
+            idx_str
+        )));
+    }
+
+    let idx = base_decode(idx_str, base)
+        .ok_or_else(|| OpenLr2Error::BmsParse(format!("invalid indexed key: {}", idx_str)))?;
+    let value = value_str
+        .parse::<f64>()
+        .map_err(|_| OpenLr2Error::BmsParse(format!("invalid indexed value: {}", value_str)))?;
+    Ok((idx, value))
+}
+
 fn base_decode(s: &str, base: u32) -> Option<usize> {
     let mut val: usize = 0;
     for ch in s.chars() {
@@ -325,6 +372,22 @@ fn base_decode(s: &str, base: u32) -> Option<usize> {
         val = val * (base as usize) + digit as usize;
     }
     Some(val)
+}
+
+fn parse_channel_code(channel: &str) -> Option<usize> {
+    if channel.chars().all(|c| c.is_ascii_digit()) {
+        channel.parse().ok()
+    } else {
+        base_decode(channel, 36)
+    }
+}
+
+fn stop_value_to_ms(value: f64) -> f64 {
+    if value > 0.0 {
+        value * 1250.0 / 48.0
+    } else {
+        0.0
+    }
 }
 
 fn channel_to_lane(channel: usize) -> Option<usize> {
@@ -348,8 +411,13 @@ fn bms_time_to_real(bms_time: Beat, timeline: &[TimingEvent]) -> openlr2_core::M
         if event.bms_time.as_f64() <= bms_time.as_f64() {
             last_bms = event.bms_time.as_f64();
             last_real = event.real_time.as_f64();
-            if let crate::timing::TimingEventKind::Bpm { bpm } = event.kind {
-                last_bpm = bpm;
+            match event.kind {
+                crate::timing::TimingEventKind::Bpm { bpm } => {
+                    last_bpm = bpm;
+                }
+                crate::timing::TimingEventKind::Stop { duration_ms } => {
+                    last_real += duration_ms.as_f64();
+                }
             }
         } else {
             break;
@@ -369,10 +437,12 @@ mod tests {
         assert_eq!(base_decode("01", 36), Some(1));
         assert_eq!(base_decode("0Z", 36), Some(35));
         assert_eq!(base_decode("10", 36), Some(36));
+        assert_eq!(base_decode("zz", 62), Some(3843));
     }
 
     #[test]
     fn channel_to_lane_7k() {
+        assert_eq!(parse_channel_code("11"), Some(11));
         assert_eq!(channel_to_lane(11), Some(0));
         assert_eq!(channel_to_lane(15), Some(4));
         assert_eq!(channel_to_lane(17), Some(6));
@@ -388,6 +458,45 @@ mod tests {
         let chart = parse_bms(bms, path, &opts).unwrap();
         assert_eq!(chart.metadata.title, "test");
         assert_eq!(chart.keymode, openlr2_core::KeyMode::Keys7);
+        assert_eq!(chart.total_notes, 4);
+        assert_eq!(chart.lanes[0].notes[0].bms_time, Beat(4.0));
+    }
+
+    #[test]
+    fn scales_measures_to_quarter_note_beats() {
+        let bms = "#BPM 120\n#00211:01\n";
+        let path = std::path::Path::new("test.bms");
+        let opts = BmsParseOptions::default();
+        let chart = parse_bms(bms, path, &opts).unwrap();
+
+        assert_eq!(chart.lanes[0].notes[0].bms_time, Beat(8.0));
+    }
+
+    #[test]
+    fn parse_indexed_bpm_and_stop_channels() {
+        let bms = "#BPM 120\n#BPM01 180\n#STOP01 192\n#00108:01\n#00109:01\n";
+        let path = std::path::Path::new("test.bms");
+        let opts = BmsParseOptions::default();
+        let chart = parse_bms(bms, path, &opts).unwrap();
+
+        assert!(chart
+            .timing
+            .iter()
+            .any(|event| matches!(event.kind, crate::timing::TimingEventKind::Bpm { bpm } if (bpm - 180.0).abs() < 0.01)));
+        assert!(chart
+            .timing
+            .iter()
+            .any(|event| matches!(event.kind, crate::timing::TimingEventKind::Stop { duration_ms } if (duration_ms.as_f64() - 5000.0).abs() < 0.01)));
+    }
+
+    #[test]
+    fn stop_delays_following_note_time() {
+        let bms = "#BPM 120\n#STOP01 192\n#00109:01\n#00111:0001\n";
+        let path = std::path::Path::new("test.bms");
+        let opts = BmsParseOptions::default();
+        let chart = parse_bms(bms, path, &opts).unwrap();
+
+        assert!((chart.lanes[0].notes[0].real_time.as_f64() - 8000.0).abs() < 0.01);
     }
 
     #[test]

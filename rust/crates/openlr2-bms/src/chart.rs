@@ -135,19 +135,21 @@ impl Default for BmsParseOptions {
 
 impl Chart {
     /// Parse a BMS file from the given path.
-    pub fn from_file(path: impl AsRef<std::path::Path>, options: BmsParseOptions) -> Result<Self, OpenLr2Error> {
+    pub fn from_file(
+        path: impl AsRef<std::path::Path>,
+        options: BmsParseOptions,
+    ) -> Result<Self, OpenLr2Error> {
         let path = path.as_ref();
-        let content = std::fs::read_to_string(path)
-            .or_else(|_| {
-                // Try reading as bytes for CP932 fallback
-                let bytes = std::fs::read(path)?;
-                if options.try_cp932 {
-                    openlr2_core::encoding::cp932_to_utf8(&bytes)
-                } else {
-                    String::from_utf8(bytes)
-                        .map_err(|e| OpenLr2Error::Encoding(format!("invalid utf-8: {}", e)))
-                }
-            })?;
+        let content = std::fs::read_to_string(path).or_else(|_| {
+            // Try reading as bytes for CP932 fallback
+            let bytes = std::fs::read(path)?;
+            if options.try_cp932 {
+                openlr2_core::encoding::cp932_to_utf8(&bytes)
+            } else {
+                String::from_utf8(bytes)
+                    .map_err(|e| OpenLr2Error::Encoding(format!("invalid utf-8: {}", e)))
+            }
+        })?;
 
         crate::parser::parse_bms(&content, path, &options)
     }
