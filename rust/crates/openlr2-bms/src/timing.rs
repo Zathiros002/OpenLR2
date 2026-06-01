@@ -34,10 +34,30 @@ pub struct BpmEvent {
 pub struct StopEvent {
     /// BMS measure-based position where the stop begins.
     pub bms_time: Beat,
-    /// Duration of the stop in milliseconds.
-    /// In BMS, a stop value of `N` means `192 / N` beats of pause
-    /// (or, with `#STP` syntax, `N` ms directly).
-    pub duration_ms: Millis,
+    /// BMS STOP value or an already-converted millisecond duration.
+    pub duration: StopDuration,
+}
+
+/// Raw STOP duration representation.
+///
+/// A BMS STOP value is beat-relative and must be converted using the active BPM
+/// at the stop position. `#STP` values are already milliseconds.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum StopDuration {
+    BmsValue(f64),
+    Millis(Millis),
+}
+
+impl StopDuration {
+    fn to_millis(self, bpm: f64) -> Millis {
+        match self {
+            StopDuration::BmsValue(value) if value > 0.0 && bpm > 0.0 => {
+                Millis(value / 48.0 / bpm * 60_000.0)
+            }
+            StopDuration::Millis(duration) => duration,
+            _ => Millis::ZERO,
+        }
+    }
 }
 
 /// Build a timing timeline from raw BPM events and stop events.
@@ -62,7 +82,7 @@ pub fn build_timeline(bpm_events: &[BpmEvent], stop_events: &[StopEvent]) -> Vec
     #[derive(Debug, Clone, Copy, PartialEq)]
     enum RawEventKind {
         Bpm { bpm: f64 },
-        Stop { duration_ms: Millis },
+        Stop { duration: StopDuration },
     }
 
     let mut events: Vec<RawEvent> = Vec::new();
@@ -82,7 +102,7 @@ pub fn build_timeline(bpm_events: &[BpmEvent], stop_events: &[StopEvent]) -> Vec
         events.push(RawEvent {
             bms_time: e.bms_time,
             kind: RawEventKind::Stop {
-                duration_ms: e.duration_ms,
+                duration: e.duration,
             },
         });
     }
@@ -125,7 +145,8 @@ pub fn build_timeline(bpm_events: &[BpmEvent], stop_events: &[StopEvent]) -> Vec
                 });
                 last_bms_time = event.bms_time.as_f64();
             }
-            RawEventKind::Stop { duration_ms } => {
+            RawEventKind::Stop { duration } => {
+                let duration_ms = duration.to_millis(current_bpm);
                 timeline.push(TimingEvent {
                     bms_time: event.bms_time,
                     real_time: Millis(accumulated_real),
@@ -192,7 +213,7 @@ mod tests {
         }];
         let stops = vec![StopEvent {
             bms_time: Beat(0.0),
-            duration_ms: Millis(1000.0),
+            duration: StopDuration::Millis(Millis(1000.0)),
         }];
         let tl = build_timeline(&bpm, &stops);
         assert_eq!(tl.len(), 2);

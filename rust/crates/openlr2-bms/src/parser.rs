@@ -19,7 +19,7 @@ use std::path::Path;
 use crate::chart::{
     BmsMeta, BmsParseOptions, Chart, Lane, Note, NoteKind, ResourceRef, ResourceTable,
 };
-use crate::timing::{build_timeline, BpmEvent, StopEvent, TimingEvent};
+use crate::timing::{build_timeline, BpmEvent, StopDuration, StopEvent, TimingEvent};
 
 struct ParseState {
     meta: BmsMeta,
@@ -33,6 +33,7 @@ struct ParseState {
     keymode: Option<u32>,
     lntype: u8,
     measure_resolutions: HashMap<u32, usize>,
+    measure_lengths: HashMap<u32, f64>,
 }
 
 pub fn parse_bms(
@@ -41,6 +42,7 @@ pub fn parse_bms(
     _options: &BmsParseOptions,
 ) -> Result<Chart, OpenLr2Error> {
     let mut state = ParseState::new(filepath);
+    let mut channel_lines = Vec::new();
 
     for line in content.lines() {
         let line = line.trim();
@@ -75,8 +77,15 @@ pub fn parse_bms(
         } else if let Some(rest) = line.strip_prefix("#LNTYPE") {
             state.lntype = rest.trim().parse().unwrap_or(0);
         } else if line.len() >= 6 {
-            state.parse_channel_line(line)?;
+            channel_lines.push(line.to_string());
         }
+    }
+
+    for line in &channel_lines {
+        state.parse_measure_length_line(line)?;
+    }
+    for line in &channel_lines {
+        state.parse_channel_line(line)?;
     }
 
     Ok(state.build_chart())
@@ -101,6 +110,7 @@ impl ParseState {
             keymode: None,
             lntype: 1,
             measure_resolutions: HashMap::new(),
+            measure_lengths: HashMap::new(),
         }
     }
 
@@ -119,7 +129,7 @@ impl ParseState {
         if val_ms > 0.0 {
             self.stop_events.push(StopEvent {
                 bms_time: Beat(0.0),
-                duration_ms: openlr2_core::Millis(val_ms),
+                duration: StopDuration::Millis(openlr2_core::Millis(val_ms)),
             });
         }
         Ok(())
@@ -153,25 +163,28 @@ impl ParseState {
         };
     }
 
+    fn parse_measure_length_line(&mut self, line: &str) -> Result<(), OpenLr2Error> {
+        let Some((measure, channel, values_str)) = parse_channel_parts(line)? else {
+            return Ok(());
+        };
+        if channel == 2 {
+            if let Ok(ratio) = values_str.trim().parse::<f64>() {
+                if ratio > 0.0 {
+                    self.measure_lengths.insert(measure, ratio);
+                }
+            }
+        }
+        Ok(())
+    }
+
     fn parse_channel_line(&mut self, line: &str) -> Result<(), OpenLr2Error> {
-        let body = &line[1..];
-        if body.len() < 6 {
+        let Some((measure, channel, values_str)) = parse_channel_parts(line)? else {
+            return Ok(());
+        };
+        if channel == 2 {
             return Ok(());
         }
-        let measure_str = &body[0..3];
-        let channel_str = &body[3..5];
-        let measure: u32 = measure_str
-            .parse()
-            .map_err(|_| OpenLr2Error::BmsParse(format!("invalid measure: {}", measure_str)))?;
 
-        let channel = parse_channel_code(channel_str)
-            .ok_or_else(|| OpenLr2Error::BmsParse(format!("invalid channel: {}", channel_str)))?;
-
-        let colon_pos = body[5..].find(':').map(|p| p + 5).unwrap_or(body.len());
-        if colon_pos >= body.len() {
-            return Ok(());
-        }
-        let values_str = &body[colon_pos + 1..];
         let num_values = values_str.len() / 2;
         if num_values == 0 {
             return Ok(());
@@ -186,9 +199,7 @@ impl ParseState {
             if val_str == "00" {
                 continue;
             }
-            // BMS measure numbers are zero-based bars. The rest of the model uses
-            // quarter-note beats, so one default 4/4 measure advances by 4 beats.
-            let beat = measure as f64 * 4.0 + (i as f64) / (num_values as f64) * 4.0;
+            let beat = self.beat_at(measure, i, num_values);
 
             if channel == 3 {
                 if let Ok(bpm) = u32::from_str_radix(val_str, 16) {
@@ -212,20 +223,18 @@ impl ParseState {
             } else if channel == 9 {
                 if let Some(idx) = base_decode(val_str, 36) {
                     if let Some(&stop_value) = self.stop_table.get(&idx) {
-                        let duration_ms = stop_value_to_ms(stop_value);
-                        if duration_ms <= 0.0 {
+                        if stop_value <= 0.0 {
                             continue;
                         }
                         self.stop_events.push(StopEvent {
                             bms_time: Beat(beat),
-                            duration_ms: openlr2_core::Millis(duration_ms),
+                            duration: StopDuration::BmsValue(stop_value),
                         });
                     }
                 } else if let Ok(val) = u32::from_str_radix(val_str, 16) {
-                    let duration_ms = stop_value_to_ms(val as f64);
                     self.stop_events.push(StopEvent {
                         bms_time: Beat(beat),
-                        duration_ms: openlr2_core::Millis(duration_ms),
+                        duration: StopDuration::BmsValue(val as f64),
                     });
                 }
             } else if let Some(lane) = channel_to_lane(channel) {
@@ -235,6 +244,17 @@ impl ParseState {
             }
         }
         Ok(())
+    }
+
+    fn beat_at(&self, measure: u32, index: usize, resolution: usize) -> f64 {
+        let start = (0..measure)
+            .map(|m| self.measure_length_beats(m))
+            .sum::<f64>();
+        start + (index as f64) / (resolution as f64) * self.measure_length_beats(measure)
+    }
+
+    fn measure_length_beats(&self, measure: u32) -> f64 {
+        4.0 * self.measure_lengths.get(&measure).copied().unwrap_or(1.0)
     }
 
     fn build_chart(self) -> Chart {
@@ -259,7 +279,7 @@ impl ParseState {
                 .iter()
                 .map(|(bms_time, val_str)| {
                     let real_time = bms_time_to_real(*bms_time, &timing);
-                    let note_val = u32::from_str_radix(val_str, 16).unwrap_or(0);
+                    let note_val = base_decode(val_str, 62).unwrap_or(0);
                     Note {
                         kind: NoteKind::Tap,
                         bms_time: *bms_time,
@@ -332,6 +352,28 @@ fn parse_resource_line(
     Ok(())
 }
 
+fn parse_channel_parts(line: &str) -> Result<Option<(u32, usize, &str)>, OpenLr2Error> {
+    let body = &line[1..];
+    if body.len() < 6 {
+        return Ok(None);
+    }
+    let measure_str = &body[0..3];
+    let channel_str = &body[3..5];
+    let measure: u32 = measure_str
+        .parse()
+        .map_err(|_| OpenLr2Error::BmsParse(format!("invalid measure: {}", measure_str)))?;
+
+    let channel = parse_channel_code(channel_str)
+        .ok_or_else(|| OpenLr2Error::BmsParse(format!("invalid channel: {}", channel_str)))?;
+
+    let colon_pos = body[5..].find(':').map(|p| p + 5).unwrap_or(body.len());
+    if colon_pos >= body.len() {
+        return Ok(None);
+    }
+
+    Ok(Some((measure, channel, &body[colon_pos + 1..])))
+}
+
 fn parse_indexed_value(rest: &str, base: u32) -> Result<(usize, f64), OpenLr2Error> {
     let idx_end = rest
         .find(|c: char| !c.is_ascii_alphanumeric())
@@ -379,14 +421,6 @@ fn parse_channel_code(channel: &str) -> Option<usize> {
         channel.parse().ok()
     } else {
         base_decode(channel, 36)
-    }
-}
-
-fn stop_value_to_ms(value: f64) -> f64 {
-    if value > 0.0 {
-        value * 1250.0 / 48.0
-    } else {
-        0.0
     }
 }
 
@@ -438,6 +472,7 @@ mod tests {
         assert_eq!(base_decode("0Z", 36), Some(35));
         assert_eq!(base_decode("10", 36), Some(36));
         assert_eq!(base_decode("zz", 62), Some(3843));
+        assert_eq!(base_decode("10", 62), Some(62));
     }
 
     #[test]
@@ -486,7 +521,7 @@ mod tests {
         assert!(chart
             .timing
             .iter()
-            .any(|event| matches!(event.kind, crate::timing::TimingEventKind::Stop { duration_ms } if (duration_ms.as_f64() - 5000.0).abs() < 0.01)));
+            .any(|event| matches!(event.kind, crate::timing::TimingEventKind::Stop { duration_ms } if (duration_ms.as_f64() - 1333.333333).abs() < 0.01)));
     }
 
     #[test]
@@ -496,7 +531,29 @@ mod tests {
         let opts = BmsParseOptions::default();
         let chart = parse_bms(bms, path, &opts).unwrap();
 
-        assert!((chart.lanes[0].notes[0].real_time.as_f64() - 8000.0).abs() < 0.01);
+        assert!((chart.lanes[0].notes[0].real_time.as_f64() - 5000.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn decodes_note_resource_ids_as_base62() {
+        let bms = "#BPM 120\n#WAV10 kick.wav\n#WAVG0 clap.wav\n#00111:10G0\n";
+        let path = std::path::Path::new("test.bms");
+        let opts = BmsParseOptions::default();
+        let chart = parse_bms(bms, path, &opts).unwrap();
+
+        assert_eq!(chart.lanes[0].notes[0].keysound_id, Some(62));
+        assert_eq!(chart.lanes[0].notes[1].keysound_id, Some(992));
+    }
+
+    #[test]
+    fn applies_measure_length_channel_to_beat_positions() {
+        let bms = "#BPM 120\n#00102:0.5\n#00111:01\n#00211:01\n";
+        let path = std::path::Path::new("test.bms");
+        let opts = BmsParseOptions::default();
+        let chart = parse_bms(bms, path, &opts).unwrap();
+
+        assert_eq!(chart.lanes[0].notes[0].bms_time, Beat(4.0));
+        assert_eq!(chart.lanes[0].notes[1].bms_time, Beat(6.0));
     }
 
     #[test]
