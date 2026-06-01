@@ -1,0 +1,25 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/openlr2-core",
+    "crates/openlr2-bms",
+    "tools/bms-dump",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/OpenLR2/OpenLR2"
+
+[workspace.dependencies]
+thiserror = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[profile.release]
+opt-level = 3
+lto = true
+
+[profile.dev]
+opt-level = 1
