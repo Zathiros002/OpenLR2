@@ -1,0 +1,11 @@
+[package]
+name = "openlr2-bms"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+openlr2-core = { path = "../openlr2-core" }
+thiserror.workspace = true
+serde.workspace = true
+serde_json.workspace = true
