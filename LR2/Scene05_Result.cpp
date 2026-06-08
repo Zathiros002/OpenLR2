@@ -200,9 +200,8 @@ static void QuickRestart(game& game, bool newRandom) {
 		game.gameplay.flag_retry = 0;
 	}
 
-	for (int i = 0; i < SLOTS; i++) {
-		StopSound(&game.audio, &game.gameplay.keysound[i]);
-	}
+	if (game.gameplay.flag_retry == 0) ReleaseBGA(&game); // ugly place for this
+	StopAllKeysound(&game);
 }
 
 char fWaitHiScoreUpdateInput = 0;
@@ -232,7 +231,7 @@ int ProcI_Result(game *g) {
 			}
 		}
 	};
-	if (g->config.play.m_gas && g->procSelecter != 13) {
+	if (g->config.play.m_gas && g->procSelecter != 13 && g->gameplay.replay.status != 2) {
 		switch_gauge_display(g->gameplay, g->KeyInput.p1_buttonInput[13], g->gameplay.player[0]);
 		if (g->config.play.battle == 1) {
 			switch_gauge_display(g->gameplay, g->KeyInput.p2_buttonInput[13], g->gameplay.player[1]);

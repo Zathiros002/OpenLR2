@@ -2211,10 +2211,11 @@ uint SetObjectValue_Num(game *g, int op) {
 			//291 is same 91
 		case 292:
 			return g->sSelect.bmsList[g->sSelect.cur_song].rivalRecord.IRranking;
-			break;
 			//293 is same 180
 		case 294: //TOFIX : IR clear rate
 			break;
+		case 295: return g->gameplay.randomLayoutForDisplay[0]; // LR2OOL SP and DP 1P random
+		case 418: return g->gameplay.randomLayoutForDisplay[1]; // LR2OOL DP 2P random
 	}
 	return 0;
 }
@@ -3375,7 +3376,7 @@ int SetObjectValue_Button(game *g, skstruct *sk, Timer *T, char flag) {
 				break;
 
 			case 74:
-				isClickSuccess = ButtonByInput(&sk->drBuf, &sk->otherObject[1].src[i], &sk->otherObject[1].dst[i], T, &g->KeyInput, &g->config.play.judgetiming, -99, 99, g->sSelect.panel);
+				isClickSuccess = ButtonByInput(&sk->drBuf, &sk->otherObject[1].src[i], &sk->otherObject[1].dst[i], T, &g->KeyInput, &g->config.play.judgetiming, -199, 199, g->sSelect.panel);
 				if (isClickSuccess == 2) {
 					PlaySound(&g->audio, &g->audio.sysSound.option_change, g->audio.chnKey, -1);
 					SetObjectStrings_SongSelect(g);

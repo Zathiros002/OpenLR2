@@ -30,14 +30,11 @@ CSTR::CSTR(int size) {
 }
 
 CSTR::~CSTR() {
-	if (body) free(body);
+	free(body);
 }
 
 int CSTR::length() {
-	if (body)
-		return strlen(body);
-	else
-		return 0;
+	return body ? strlen(body) : 0;
 }
 
 DWORD CSTR::CRC32() {
@@ -329,23 +326,12 @@ char * cstrSprintf(CSTR *str, const char *format, ...) {
 }
 
 int CSTR::toFile(const char *filepath) {
-	char *_Str;
-	FILE *_File;
-	char *pcVar2;
-
-	_File = fopen(filepath, "w");
-	if (_File == (FILE *)0x0) {
+	FILE *f = fopen(filepath, "w");
+	if (f == nullptr) {
 		return -1;
 	}
-	_Str = body;
-	if (_Str == (char *)0x0) {
-		pcVar2 = (char *)0x0;
-	}
-	else {
-		pcVar2 = (char*)strlen(_Str);
-	}
-	fwrite(_Str, 1, (size_t)(pcVar2 + 1), _File);
-	fclose(_File);
+	fwrite(body, 1, body ? strlen(body) : 0, f);
+	fclose(f);
 	return 1;
 }
 
@@ -539,7 +525,11 @@ CSTR CSTR::getDirectory() {
 }
 
 CSTR CSTR::getParentDirectory() {
-	return getDirectory().getDirectory();
+	CSTR out;
+	out.assign(std::filesystem::path{ this->body }.parent_path().parent_path().string().c_str());
+	*out.atPos(out.length() + 1) = '\0';
+	*out.atPos(out.length()) = std::filesystem::path::preferred_separator;
+	return out;
 }
 
 CSTR& CSTR::cutDirectorySeparator() {

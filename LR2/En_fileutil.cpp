@@ -597,6 +597,10 @@ int Base36ToInt(char ch1, char ch2) {
 	return ret;
 }
 
+int Base36or62ToInt(char ch1, char ch2, bool is62) {
+	return is62 ? Base62ToInt(ch1, ch2) : Base36ToInt(ch1, ch2);
+}
+
 int HEXcharToInt(char ch1, char ch2) {
 	int ret = 0;
 

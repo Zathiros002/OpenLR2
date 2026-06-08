@@ -107,19 +107,25 @@ if(MSVC)
     target_compile_options(OpenLR2Lib PUBLIC /utf-8)
 endif()
 
+# 4GB patch for 32-bit.
+if(MSVC)
+    target_link_options(OpenLR2Lib PUBLIC /LARGEADDRESSAWARE)
+else()
+    # untested
+    # target_link_options(OpenLR2Lib PUBLIC -Wl,--large-address-aware)
+endif()
+
+# 'game' god struct is very big while on the stack.
+if(MSVC)
+    target_link_options(OpenLR2Lib PUBLIC /STACK:10485760)
+else()
+    # untested
+    # target_link_options(OpenLR2Lib PUBLIC -Wl,--stack,10485760)
+endif()
+
 add_executable(OpenLR2 WIN32 LR2/Main.cpp OpenLR2.manifest)
 set_target_properties(OpenLR2 PROPERTIES CXX_STANDARD 23)
 target_link_libraries(OpenLR2 PUBLIC OpenLR2Lib)
-
-if(WIN32)
-    # 4GB patch for 32-bit
-    if(MSVC)
-        target_link_options(OpenLR2 PUBLIC /LARGEADDRESSAWARE)
-    else()
-        # untested
-        # target_link_options(OpenLR2 PUBLIC -Wl,--large-address-aware)
-    endif()
-endif()
 
 if(WIN32)
     # FIXME: SkinEditor manifest
