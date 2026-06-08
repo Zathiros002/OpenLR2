@@ -210,8 +210,7 @@
       <AdditionalLibraryDirectories>$(ProjectDir)lib\FMODex\;$(ProjectDir)lib\FMOD\;$(ProjectDir)lib\DxLib\;$(ProjectDir)lib\;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <AdditionalDependencies>winmm.lib;$(CoreLibraryDependencies);%(AdditionalDependencies)</AdditionalDependencies>
       <ImageHasSafeExceptionHandlers>true</ImageHasSafeExceptionHandlers>
-      <StackReserveSize>
-      </StackReserveSize>
+      <StackReserveSize>10485760</StackReserveSize>
       <LargeAddressAware>true</LargeAddressAware>
     </Link>
     <Manifest>
@@ -240,8 +239,7 @@
       <AdditionalLibraryDirectories>$(ProjectDir)lib\FMODex\;$(ProjectDir)lib\FMOD\;$(ProjectDir)lib\DxLib\;$(ProjectDir)lib\;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <AdditionalDependencies>winmm.lib;$(CoreLibraryDependencies);%(AdditionalDependencies)</AdditionalDependencies>
       <ImageHasSafeExceptionHandlers>true</ImageHasSafeExceptionHandlers>
-      <StackReserveSize>
-      </StackReserveSize>
+      <StackReserveSize>10485760</StackReserveSize>
       <LargeAddressAware>true</LargeAddressAware>
     </Link>
     <Manifest>
@@ -298,7 +296,7 @@
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <AdditionalLibraryDirectories>$(ProjectDir)lib\FMODex\;$(ProjectDir)lib\FMOD\;$(ProjectDir)lib\DxLib\;$(ProjectDir)lib\;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <AdditionalDependencies>winmm.lib;$(CoreLibraryDependencies);%(AdditionalDependencies)</AdditionalDependencies>
-      <StackReserveSize>4194304</StackReserveSize>
+      <StackReserveSize>10485760</StackReserveSize>
       <LargeAddressAware>true</LargeAddressAware>
     </Link>
     <Manifest>
@@ -325,7 +323,7 @@
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <AdditionalLibraryDirectories>$(ProjectDir)lib\FMODex\;$(ProjectDir)lib\FMOD\;$(ProjectDir)lib\DxLib\;$(ProjectDir)lib\;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <AdditionalDependencies>winmm.lib;$(CoreLibraryDependencies);%(AdditionalDependencies)</AdditionalDependencies>
-      <StackReserveSize>4194304</StackReserveSize>
+      <StackReserveSize>10485760</StackReserveSize>
       <LargeAddressAware>true</LargeAddressAware>
     </Link>
     <Manifest>

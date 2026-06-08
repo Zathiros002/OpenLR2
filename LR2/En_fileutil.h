@@ -58,6 +58,7 @@ int DealWhiteSpace(CSTR * str);
 int SplitCSV(CSTR csvStr, CSVbuf * oBuf, const char * splitter);
 int Base62ToInt(char ch1, char ch2);
 int Base36ToInt(char ch1, char ch2);
+int Base36or62ToInt(char ch1, char ch2, bool is62);
 int HEXcharToInt(char ch1, char ch2);
 int RoundUp(double val);
 CSTR AssignCRC32(CSTR str);

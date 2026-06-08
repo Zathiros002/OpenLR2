@@ -456,6 +456,7 @@ int DrawNotes(game *g, skstruct *sk, Timer *T, CONFIG_PLAY *cfg) {
 				}
 
 				if (note_y > 0.0) note_y = 0.0;
+				if (noteL_y > 0.0) noteL_y = 0.0;
 				
 				if (key < 10) {
 					note_x = sk->adjust.note_1p_x + g->gameplay.nabeatsu_x + 0.0;
@@ -1106,7 +1107,7 @@ static void QuickRestart(game& game, bool newRandom) {
 		game.gameplay.flag_retry = 0;
 	}
 
-	ReleaseBGA(&game); // ugly place for this
+	if (game.gameplay.flag_retry == 0) ReleaseBGA(&game); // ugly place for this
 	StopAllKeysound(&game);
 }
 
@@ -1170,12 +1171,12 @@ int ProcI_Play(game *g) {
 	return 1;
 }
 
-
+#define POLLGAP 2
 int ProcGame(game *g) {
 
 	double oldt142;
 
-	if (GetTimeWrap() < g->gameplay.timetick + 2) return 1; //TODO : pollrate 500 -> 1000
+	if (GetTimeWrap() < g->gameplay.timetick + POLLGAP) return 1; //pollrate 500 -> 1000
 	g->gameplay.timetick = GetTimeWrap();
 	if (GetTimeLapse(160, &g->timer1) < 0.0 && g->is_starter == 0 && g->gameplay.isPreviewLoad == 0) {
 		SetTimeLapse(160, &g->timer1);
@@ -1191,7 +1192,7 @@ int ProcGame(game *g) {
 
 	//TEST:
 	g->timer1.GAPtick++;
-	if (t41 - g->timer1.GAPclock > 2) {
+	if (t41 - g->timer1.GAPclock > POLLGAP) {
 		g->timer1.GAPcount++;
 		g->timer1.avgOnlyGAP = ((g->timer1.avgOnlyGAP * ((double)g->timer1.GAPcount - 1.0)) + (t41 - g->timer1.GAPclock) * 1.0) / (double)g->timer1.GAPcount;
 	}
